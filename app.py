@@ -19,11 +19,9 @@ SHEET_ID = "1_zL294hNTYo1naBNBGviSr8jVMMpUIsUCT96kTnnP1Y"   # tu hoja
 WORKSHEET_NAME = "Hoja 1"                                    # según captura
 TZ = ZoneInfo("America/Costa_Rica")
 
-# Centro Sámara y radio destacado
 SAMARA_CENTER = [9.8814, -85.5233]
 DESTACAR_RADIO_KM = 4
 
-# --- Factores y colores ---
 FACTORES = [
     "Calles sin iluminación adecuada por la noche.",
     "Calles con poca visibilidad por vegetación, muros o abandono.",
@@ -180,7 +178,6 @@ def _legend_html() -> str:
     )
 
 def _inverse_mask_geojson(center_lat: float, center_lng: float, radius_km: float, npts: int = 96):
-    # Construimos anillo exterior (caja mundo) y anillo interior (círculo aprox.)
     outer = [[-179.9, -89.9], [-179.9, 89.9], [179.9, 89.9], [179.9, -89.9], [-179.9, -89.9]]
     rlat = radius_km / 110.574
     rlng = radius_km / (111.320 * max(0.000001, math.cos(math.radians(center_lat))))
@@ -197,19 +194,18 @@ def _inverse_mask_geojson(center_lat: float, center_lng: float, radius_km: float
             "geometry": {"type": "Polygon", "coordinates": [outer, inner]}
         }]
     }
-    # estilo con fillOpacity para atenuar exterior
-    return folium.GeoJson(geojson, style_function=lambda x: {
-        "fillColor": "#FFFFFF", "color": "#999999", "weight": 1, "fillOpacity": 0.70
-    })
+    return folium.GeoJson(
+        geojson,
+        name="Máscara 4 km",
+        style_function=lambda x: {"fillColor": "#FFFFFF", "color": "#999999", "weight": 1, "fillOpacity": 0.70},
+        overlay=True, control=True, pane="mask"
+    )
 
-def _add_mask_safe(m):
-    """Añade la máscara; si da cualquier error, no interrumpe el render."""
-    try:
-        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m)
-    except Exception as e:
-        # fallback: solo un círculo de referencia (sin máscara)
-        folium.Circle(SAMARA_CENTER, radius=DESTACAR_RADIO_KM*1000,
-                      color="#999", fill=False, weight=2).add_to(m)
+def _add_panes(m):
+    # organiza z-index para que el heatmap quede encima
+    folium.map.CustomPane("mask", z_index=200).add_to(m)
+    folium.map.CustomPane("markers", z_index=400).add_to(m)
+    folium.map.CustomPane("heatmap", z_index=650).add_to(m)
 
 # ========= UI =========
 st.title("📍 Microdespliegue Sámara – Encuestas georreferenciadas")
@@ -227,16 +223,18 @@ with tabs[0]:
         center = [clicked.get("lat", default_center[0]), clicked.get("lng", default_center[1])]
 
         m = folium.Map(location=center, zoom_start=13, control_scale=True, tiles=None)
+        _add_panes(m)
         folium.TileLayer("CartoDB positron", name="Base gris").add_to(m)
         folium.TileLayer("OpenStreetMap", name="Color local").add_to(m)
-        _add_mask_safe(m)
+        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m)
         LocateControl(auto_start=False, flyTo=True).add_to(m)
-        folium.LayerControl().add_to(m)
 
         if clicked.get("lat") is not None and clicked.get("lng") is not None:
             folium.CircleMarker([clicked["lat"], clicked["lng"]], radius=8, color="#000",
                                 weight=1, fill=True, fill_color="#2dd4bf", fill_opacity=0.9,
-                                tooltip="Ubicación seleccionada").add_to(m)
+                                tooltip="Ubicación seleccionada", pane="markers").add_to(m)
+
+        folium.LayerControl(collapsed=False).add_to(m)
 
         map_ret = st_folium(m, height=520, use_container_width=True)
         if map_ret and map_ret.get("last_clicked"):
@@ -305,18 +303,18 @@ with tabs[1]:
         with c2:
             show_heat = st.checkbox("Mostrar HeatMap", value=True)
         with c3:
-            show_clusters = st.checkbox("Mostrar clusters", value=True)
+            show_clusters = st.checkbox("Mostrar clusters", value=False)
 
         m2 = folium.Map(location=SAMARA_CENTER, zoom_start=13, control_scale=True, tiles=None)
+        _add_panes(m2)
         folium.TileLayer("CartoDB positron", name="Base gris").add_to(m2)
         folium.TileLayer("OpenStreetMap", name="Color local").add_to(m2)
-        _add_mask_safe(m2)
+        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m2)
         LocateControl(auto_start=False).add_to(m2)
         m2.get_root().html.add_child(folium.Element(_legend_html()))
-        folium.LayerControl().add_to(m2)
 
-        cluster = MarkerCluster() if show_clusters else None
-        if cluster: cluster.add_to(m2)
+        cluster = MarkerCluster(name="Marcadores (cluster)", overlay=True, control=True) if show_clusters else folium.FeatureGroup(name="Marcadores", overlay=True, control=True)
+        cluster.add_to(m2)
 
         idx = 0
         omitidos = 0
@@ -343,15 +341,26 @@ with tabs[1]:
                 max_width=360,
             )
 
-            marker = folium.CircleMarker([jlat, jlng], radius=8, color="#000", weight=1,
-                                         fill=True, fill_color=color, fill_opacity=0.95,
-                                         popup=popup)
-            (cluster or m2).add_child(marker)
+            folium.CircleMarker([jlat, jlng], radius=8, color="#000", weight=1,
+                                fill=True, fill_color=color, fill_opacity=0.95,
+                                popup=popup, pane="markers").add_to(cluster)
             heat_points.append([lat, lng, 1.0])
             idx += 1
 
+        # ---- HEATMAP como FeatureGroup en su propio pane (encima de todo)
         if show_heat and heat_points:
-            HeatMap(heat_points, radius=18, blur=22, max_zoom=16, min_opacity=0.25).add_to(m2)
+            fg_heat = folium.FeatureGroup(name="Mapa de calor", overlay=True, control=True)
+            HeatMap(heat_points, radius=18, blur=22, max_zoom=16, min_opacity=0.25).add_to(fg_heat)
+            # mover el feature group al pane de heatmap
+            fg_heat.add_to(m2)
+            # aplicar pane vía JS (simple y efectivo)
+            m2.get_root().html.add_child(folium.Element(
+                "<script>setTimeout(()=>{"
+                "document.querySelectorAll('.leaflet-heatmap-layer').forEach(e=>{e.style.zIndex=650;});"
+                "}, 0);</script>"
+            ))
+
+        folium.LayerControl(collapsed=False).add_to(m2)
 
         st_folium(m2, height=540, use_container_width=True)
         if omitidos:
@@ -366,7 +375,7 @@ with tabs[1]:
                            data=show_df.to_csv(index=False).encode("utf-8"),
                            file_name="encuestas_samara.csv", mime="text/csv")
 
-        # ---- ADMIN: Eliminar ----
+        # ---- ADMIN ----
         st.markdown("---"); st.markdown("### 🗑️ Eliminar respuestas")
         ws = _ws()
         opciones = []
@@ -405,4 +414,6 @@ with tabs[1]:
                         st.cache_data.clear()
                     except Exception as e:
                         st.error(f"No se pudo vaciar: {e}")
+
+
 
