@@ -15,15 +15,15 @@ from folium.plugins import MarkerCluster, LocateControl, HeatMap
 st.set_page_config(page_title="Microdespliegue Sámara – Encuestas", layout="wide")
 
 # ========= CONFIG =========
-SHEET_ID = "1_zL294hNTYo1naBNBGviSr8jVMMpUIsUCT96kTnnP1Y"  # tu hoja
-WORKSHEET_NAME = "Hoja 1"  # según captura
+SHEET_ID = "1_zL294hNTYo1naBNBGviSr8jVMMpUIsUCT96kTnnP1Y"   # tu hoja
+WORKSHEET_NAME = "Hoja 1"                                    # según captura
 TZ = ZoneInfo("America/Costa_Rica")
 
 # Centro Sámara y radio destacado
 SAMARA_CENTER = [9.8814, -85.5233]
 DESTACAR_RADIO_KM = 4
 
-# --- Factores y colores (orden fijo) ---
+# --- Factores y colores ---
 FACTORES = [
     "Calles sin iluminación adecuada por la noche.",
     "Calles con poca visibilidad por vegetación, muros o abandono.",
@@ -59,11 +59,9 @@ FACTOR_COLORS = {
     FACTORES[21]:"#b15928",
 }
 
-# Cabecera recomendada (sin lat/lng)
 NEW_HEADERS = [
     "date","barrio","factores","delitos_relacionados",
-    "ligado_estructura","nombre_estructura","observaciones",
-    "maps_link"
+    "ligado_estructura","nombre_estructura","observaciones","maps_link"
 ]
 
 # ========= GSPREAD =========
@@ -78,7 +76,7 @@ def _ws():
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(WORKSHEET_NAME, rows=2000, cols=26)
         ws.append_row(NEW_HEADERS)
-    if not ws.row_values(1):  # si la primera fila está vacía
+    if not ws.row_values(1):
         ws.append_row(NEW_HEADERS)
     _ensure_schema(ws)
     return ws
@@ -91,37 +89,26 @@ def _hex_to_rgb01(h):
 
 def _ensure_schema(ws):
     headers = _headers(ws)
-    # eliminar columnas lat/lng heredadas si existieran
     for name in ["lat","lng"]:
         if name in headers:
             ws.delete_columns(headers.index(name)+1)
             headers = _headers(ws)
-    # asegurar maps_link
     if "maps_link" not in headers:
         ws.update_cell(1, len(headers)+1, "maps_link")
 
 def append_row(data: dict):
-    """ Guarda fila siguiendo el orden actual de la hoja y colorea el factor. """
     ws = _ws()
     headers = _headers(ws)
     maps_url = f'https://www.google.com/maps?q={data["lat"]},{data["lng"]}'
     values = {
-        "date": data.get("date",""),
-        "barrio": data.get("barrio",""),
-        "factores": data.get("factores",""),
-        "delitos_relacionados": data.get("delitos_relacionados",""),
-        "ligado_estructura": data.get("ligado_estructura",""),
-        "nombre_estructura": data.get("nombre_estructura",""),
-        "observaciones": data.get("observaciones",""),
-        "maps_link": maps_url,
-        # retro-compat si traes hojas viejas
-        "timestamp": data.get("date",""),
-        "factor_riesgo": data.get("factores",""),
+        "date": data.get("date",""), "barrio": data.get("barrio",""),
+        "factores": data.get("factores",""), "delitos_relacionados": data.get("delitos_relacionados",""),
+        "ligado_estructura": data.get("ligado_estructura",""), "nombre_estructura": data.get("nombre_estructura",""),
+        "observaciones": data.get("observaciones",""), "maps_link": maps_url,
+        "timestamp": data.get("date",""), "factor_riesgo": data.get("factores",""),
     }
     ws.append_row([values.get(c,"") for c in headers], value_input_option="USER_ENTERED")
     last_row = len(ws.get_all_values())
-
-    # Pintar celda del factor
     col = None
     if "factores" in headers: col = headers.index("factores")+1
     elif "factor_riesgo" in headers: col = headers.index("factor_riesgo")+1
@@ -131,12 +118,10 @@ def append_row(data: dict):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def read_df() -> pd.DataFrame:
-    """ Devuelve DF normalizado. Reconstruye lat/lng desde maps_link (URL directa o HYPERLINK). """
     ws = _ws()
     records = ws.get_all_records()
     df_raw = pd.DataFrame(records)
 
-    # leer fórmulas (para HYPERLINK)
     all_formulas = ws.get_all_values(value_render_option="FORMULA")
     headers = all_formulas[0] if all_formulas else []
     maps_col_idx = headers.index("maps_link") if "maps_link" in headers else None
@@ -157,7 +142,6 @@ def read_df() -> pd.DataFrame:
         df[c] = df_raw[c] if c in df_raw.columns else ""
     df["maps_link"] = df_raw["maps_link"] if "maps_link" in df_raw.columns else ""
 
-    # Extraer lat/lng
     lats, lngs = [], []
     url_pat = re.compile(r"https?://.*maps\?q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")
     hyp_pat = re.compile(r'HYPERLINK\("https?://.*maps\?q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)"')
@@ -196,12 +180,7 @@ def _legend_html() -> str:
     )
 
 def _inverse_mask_geojson(center_lat: float, center_lng: float, radius_km: float, npts: int = 96):
-    """
-    GeoJSON con 'agujero' circular:
-    - Exterior: caja mundial
-    - Interior: círculo aprox alrededor del centro (área no sombreada)
-    Atenúa fuera del círculo y mantiene a color dentro (radio 4 km).
-    """
+    # Construimos anillo exterior (caja mundo) y anillo interior (círculo aprox.)
     outer = [[-179.9, -89.9], [-179.9, 89.9], [179.9, 89.9], [179.9, -89.9], [-179.9, -89.9]]
     rlat = radius_km / 110.574
     rlng = radius_km / (111.320 * max(0.000001, math.cos(math.radians(center_lat))))
@@ -218,8 +197,19 @@ def _inverse_mask_geojson(center_lat: float, center_lng: float, radius_km: float
             "geometry": {"type": "Polygon", "coordinates": [outer, inner]}
         }]
     }
-    style = lambda x: {"fillColor": "#FFFFFF", "color": "#999999", "weight": 1, "fillOpacity": 0.70}
-    return folium.GeoJson(geojson, style_function=style)
+    # estilo con fillOpacity para atenuar exterior
+    return folium.GeoJson(geojson, style_function=lambda x: {
+        "fillColor": "#FFFFFF", "color": "#999999", "weight": 1, "fillOpacity": 0.70
+    })
+
+def _add_mask_safe(m):
+    """Añade la máscara; si da cualquier error, no interrumpe el render."""
+    try:
+        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m)
+    except Exception as e:
+        # fallback: solo un círculo de referencia (sin máscara)
+        folium.Circle(SAMARA_CENTER, radius=DESTACAR_RADIO_KM*1000,
+                      color="#999", fill=False, weight=2).add_to(m)
 
 # ========= UI =========
 st.title("📍 Microdespliegue Sámara – Encuestas georreferenciadas")
@@ -236,13 +226,12 @@ with tabs[0]:
         clicked = st.session_state.get("clicked") or {}
         center = [clicked.get("lat", default_center[0]), clicked.get("lng", default_center[1])]
 
-        # Mapa con base gris + color local con máscara 4 km
         m = folium.Map(location=center, zoom_start=13, control_scale=True, tiles=None)
-        folium.TileLayer(tiles="CartoDB positron", name="Base gris").add_to(m)
-        folium.TileLayer(tiles="OpenStreetMap", name="Color local").add_to(m)
-        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m)
-
+        folium.TileLayer("CartoDB positron", name="Base gris").add_to(m)
+        folium.TileLayer("OpenStreetMap", name="Color local").add_to(m)
+        _add_mask_safe(m)
         LocateControl(auto_start=False, flyTo=True).add_to(m)
+        folium.LayerControl().add_to(m)
 
         if clicked.get("lat") is not None and clicked.get("lng") is not None:
             folium.CircleMarker([clicked["lat"], clicked["lng"]], radius=8, color="#000",
@@ -309,7 +298,6 @@ with tabs[1]:
     if df.empty:
         st.info("Aún no hay registros.")
     else:
-        # Filtros
         factores_unicos = [f for f in FACTORES if f in set(df["factores"].dropna().tolist())]
         c1, c2, c3 = st.columns([0.4,0.3,0.3])
         with c1:
@@ -319,13 +307,13 @@ with tabs[1]:
         with c3:
             show_clusters = st.checkbox("Mostrar clusters", value=True)
 
-        # Mapa con máscara 4 km y leyenda
         m2 = folium.Map(location=SAMARA_CENTER, zoom_start=13, control_scale=True, tiles=None)
-        folium.TileLayer(tiles="CartoDB positron", name="Base gris").add_to(m2)
-        folium.TileLayer(tiles="OpenStreetMap", name="Color local").add_to(m2)
-        _inverse_mask_geojson(SAMARA_CENTER[0], SAMARA_CENTER[1], DESTACAR_RADIO_KM).add_to(m2)
+        folium.TileLayer("CartoDB positron", name="Base gris").add_to(m2)
+        folium.TileLayer("OpenStreetMap", name="Color local").add_to(m2)
+        _add_mask_safe(m2)
         LocateControl(auto_start=False).add_to(m2)
         m2.get_root().html.add_child(folium.Element(_legend_html()))
+        folium.LayerControl().add_to(m2)
 
         cluster = MarkerCluster() if show_clusters else None
         if cluster: cluster.add_to(m2)
@@ -369,7 +357,7 @@ with tabs[1]:
         if omitidos:
             st.caption(f"({omitidos} registro(s) omitidos por coordenadas inválidas)")
 
-        # Tabla y descargas
+        # ===== Tabla =====
         show_df = df[["date","barrio","factores","delitos_relacionados",
                       "ligado_estructura","nombre_estructura","observaciones","maps_link"]]
         st.markdown("#### Tabla de respuestas")
@@ -417,3 +405,4 @@ with tabs[1]:
                         st.cache_data.clear()
                     except Exception as e:
                         st.error(f"No se pudo vaciar: {e}")
+
