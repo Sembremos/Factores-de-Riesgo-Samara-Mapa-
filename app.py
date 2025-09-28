@@ -23,41 +23,49 @@ TZ = ZoneInfo("America/Costa_Rica")
 SAMARA_CENTER = [9.8814, -85.5233]
 DESTACAR_RADIO_KM = 4
 
-# Factores y colores
+# ========= FACTORES (Lista actualizada para Sámara – zona costera) =========
 FACTORES = [
     "Calles sin iluminación adecuada por la noche.",
     "Calles con poca visibilidad por vegetación, muros o abandono.",
     "Zonas con lotes baldíos o propiedades abandonadas.",
     "Presencia de personas desconocidas merodeando sin razón aparente.",
     "Personas consumiendo drogas o alcohol en la vía pública.",
+    "Consumo de drogas en espacios privados tipo 'búnker' o cuarterías.",
     "Presencia constante de motocicletas sin placas o “sospechosas”.",
-    "Ausencia de presencia policial visible o cercana.",
-    "Accesos rápidos de escape desde la zona (calles, ríos, callejones).",
-    "Espacios públicos deteriorados (parques, aceras, etc.).",
-    "Ruido excesivo o escándalos a cualquier hora del día.",
-    "Falta de cámaras de seguridad en la zona.",
-    "Estacionamientos inseguros o sin control.",
-    "Grafitis o pintas intimidantes (no artísticas).",
-    "Ventas informales o con presencia agresiva.",
-    "Frecuente presencia de menores de edad sin supervisión en la zona.",
-    "Ingreso fácil a zonas no vigiladas (playas, callejones, senderos).",
-    "Altos niveles de basura o suciedad en la zona.",
-    "Zonas donde se han dado riñas o enfrentamientos recientemente.",
-    "Personas en situación de calle vulnerables o con conductas agresivas.",
-    "Negocios abandonados o cerrados de forma permanente.",
-    "Vehículos sospechosos parqueados por tiempo prolongado.",
+    "Ausencia de presencia policial visible o patrullajes limitados.",
+    "Accesos rápidos de escape desde la zona (playas, ríos, callejones).",
+    "Espacios públicos deteriorados o con pérdida de uso (playas, parques, canchas).",
+    "Ruido excesivo, fiestas o escándalos en zonas turísticas/residenciales.",
+    "Falta de cámaras de seguridad o sistemas de videovigilancia comunitaria.",
+    "Estacionamientos inseguros o sin control (áreas de playa y centros turísticos).",
+    "Grafitis o pintas con mensajes intimidantes (no artísticas).",
+    "Ventas informales y comercio ambulante sin regulación.",
+    "Zonas de prostitución visibles en espacios turísticos.",
+    "Personas en situación de calle (algunas con conductas agresivas).",
+    "Jóvenes con exceso de tiempo de ocio sin alternativas positivas.",
+    "Falta de oferta educativa complementaria en la zona.",
+    "Falta de oferta deportiva accesible y constante.",
+    "Falta de oferta recreativa para población local y visitantes.",
+    "Falta de actividades culturales regulares y accesibles.",
+    "Problemas vecinales y conflictos entre residentes/turistas.",
+    "Reportes de robos, tacha de vehículos y riñas en la vía pública.",
+    "Posible presencia de pandillas o estructuras ligadas al narcotráfico marítimo.",
+    "Negocios abandonados o cerrados de forma permanente en áreas turísticas.",
+    "Altos niveles de basura o suciedad en zonas de playa y espacios públicos.",
+    "Zonas con antecedentes recientes de homicidios o enfrentamientos violentos.",
+    "Percepción de inseguridad y acoso callejero hacia mujeres.",
     "Otro: especificar.",
 ]
-FACTOR_COLORS = {
-    FACTORES[0]:"#e41a1c", FACTORES[1]:"#377eb8", FACTORES[2]:"#4daf4a",
-    FACTORES[3]:"#984ea3", FACTORES[4]:"#ff7f00", FACTORES[5]:"#ffff33",
-    FACTORES[6]:"#a65628", FACTORES[7]:"#f781bf", FACTORES[8]:"#999999",
-    FACTORES[9]:"#1b9e77", FACTORES[10]:"#d95f02", FACTORES[11]:"#7570b3",
-    FACTORES[12]:"#e7298a", FACTORES[13]:"#66a61e", FACTORES[14]:"#e6ab02",
-    FACTORES[15]:"#a6761d", FACTORES[16]:"#1f78b4", FACTORES[17]:"#b2df8a",
-    FACTORES[18]:"#fb9a99", FACTORES[19]:"#cab2d6", FACTORES[20]:"#fdbf6f",
-    FACTORES[21]:"#b15928",
-}
+
+# Paleta amplia y generación automática de colores (1:1 con FACTORES)
+_PALETTE = [
+    "#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33",
+    "#a65628","#f781bf","#999999","#1b9e77","#d95f02","#7570b3",
+    "#e7298a","#66a61e","#e6ab02","#a6761d","#1f78b4","#b2df8a",
+    "#fb9a99","#cab2d6","#fdbf6f","#b15928","#8dd3c7","#80b1d3",
+    "#bebada","#fb8072","#80b1d3","#b3de69","#fccde5","#bc80bd"
+]
+FACTOR_COLORS = {f: _PALETTE[i % len(_PALETTE)] for i, f in enumerate(FACTORES)}
 
 NEW_HEADERS = [
     "date","barrio","factores","delitos_relacionados",
@@ -81,7 +89,7 @@ def _ws():
     _ensure_schema(ws)
     return ws
 
-def _headers(ws): 
+def _headers(ws):
     return [h.strip() for h in ws.row_values(1)]
 
 def _hex_to_rgb01(h):
@@ -321,11 +329,14 @@ with tabs[1]:
 
         # === HEATMAP SOLO EN ROJOS ===
         if show_heat and heat_points:
-            # Gradiente en rojos: pink -> red -> darkred
             red_gradient = {0.2: "pink", 0.5: "red", 1.0: "darkred"}
-            HeatMap(heat_points,
-                    radius=18, blur=22, max_zoom=16, min_opacity=0.25,
-                    gradient=red_gradient).add_to(folium.FeatureGroup(name="Mapa de calor", overlay=True, control=True, pane="heatmap").add_to(m2))
+            HeatMap(
+                heat_points,
+                radius=18, blur=22, max_zoom=16, min_opacity=0.25,
+                gradient=red_gradient
+            ).add_to(
+                folium.FeatureGroup(name="Mapa de calor", overlay=True, control=True, pane="heatmap").add_to(m2)
+            )
 
         folium.LayerControl(collapsed=False).add_to(m2)
         st_folium(m2, height=540, use_container_width=True)
@@ -341,8 +352,6 @@ with tabs[1]:
         st.download_button("⬇️ Descargar CSV",
                            data=show_df.to_csv(index=False).encode("utf-8"),
                            file_name="encuestas_samara.csv", mime="text/csv")
-
-
 
 
 
