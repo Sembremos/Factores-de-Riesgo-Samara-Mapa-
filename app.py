@@ -30,7 +30,7 @@ FACTORES = [
     "Zonas con lotes baldíos o propiedades abandonadas.",
     "Presencia de personas desconocidas merodeando sin razón aparente.",
     "Personas consumiendo drogas o alcohol en la vía pública.",
-    "Consumo de drogas en espacios privados tipo 'búnker' o cuarterías.",
+    "Consumo o venta de drogas en espacios privados tipo 'búnker' o cuarterías.",
     "Presencia constante de motocicletas sin placas o “sospechosas”.",
     "Ausencia de presencia policial visible o patrullajes limitados.",
     "Accesos rápidos de escape desde la zona (playas, ríos, callejones).",
@@ -49,7 +49,7 @@ FACTORES = [
     "Falta de actividades culturales regulares y accesibles.",
     "Problemas vecinales y conflictos entre residentes/turistas.",
     "Reportes de robos, tacha de vehículos y riñas en la vía pública.",
-    "Posible presencia de pandillas o estructuras ligadas al narcotráfico marítimo.",
+    "Posible presencia de pandillas o estructuras ligadas al narcotráfico.",
     "Negocios abandonados o cerrados de forma permanente en áreas turísticas.",
     "Altos niveles de basura o suciedad en zonas de playa y espacios públicos.",
     "Zonas con antecedentes recientes de homicidios o enfrentamientos violentos.",
@@ -410,6 +410,7 @@ with tabs[1]:
         st.download_button("⬇️ Descargar CSV",
                            data=show_df.to_csv(index=False).encode("utf-8"),
                            file_name="encuestas_samara.csv", mime="text/csv")
+
 
 
 
