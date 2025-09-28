@@ -105,59 +105,104 @@ def _ensure_schema(ws):
     if "maps_link" not in headers:
         ws.update_cell(1, len(headers)+1, "maps_link")
 
+def _split_factores(factores_str: str):
+    """Convierte 'A | B | C' -> ['A','B','C']"""
+    if isinstance(factores_str, list):
+        return factores_str
+    if not isinstance(factores_str, str):
+        return []
+    return [s.strip() for s in factores_str.split("|") if s.strip()]
+
 def append_row(data: dict):
+    """
+    Guarda una respuesta en filas separadas por cada factor seleccionado.
+    - Si vienen múltiples factores, se crean N filas (una por factor).
+    - Cada fila queda coloreada según su factor.
+    """
     ws = _ws()
     headers = _headers(ws)
+
+    factores_list = _split_factores(data.get("factores", []))
+    if not factores_list:
+        # si no hubiera factores, no guardamos nada
+        return
+
     maps_url = f'https://www.google.com/maps?q={data["lat"]},{data["lng"]}'
 
-    # data["factores"] ahora es lista -> guardamos como string " | " y usamos el primero para color
-    factores_list = data.get("factores", []) or []
-    factores_str = " | ".join(factores_list)
-    factor_principal = factores_list[0] if factores_list else ""
+    # Guarda una fila por factor
+    for f in factores_list:
+        values = {
+            "date": data.get("date",""),
+            "barrio": data.get("barrio",""),
+            "factores": f,  # <-- un solo factor por fila
+            "delitos_relacionados": data.get("delitos_relacionados",""),
+            "ligado_estructura": data.get("ligado_estructura",""),
+            "nombre_estructura": data.get("nombre_estructura",""),
+            "observaciones": data.get("observaciones",""),
+            "maps_link": maps_url,
+        }
+        ws.append_row([values.get(c,"") for c in headers], value_input_option="USER_ENTERED")
 
-    values = {
-        "date": data.get("date",""), "barrio": data.get("barrio",""),
-        "factores": factores_str, "delitos_relacionados": data.get("delitos_relacionados",""),
-        "ligado_estructura": data.get("ligado_estructura",""), "nombre_estructura": data.get("nombre_estructura",""),
-        "observaciones": data.get("observaciones",""), "maps_link": maps_url,
-        "timestamp": data.get("date",""), "factor_riesgo": factores_str,
-    }
-    ws.append_row([values.get(c,"") for c in headers], value_input_option="USER_ENTERED")
-
-    # colorear la celda del factor (si existe columna) con color del primer factor
-    col = None
-    if "factores" in headers: col = headers.index("factores")+1
-    elif "factor_riesgo" in headers: col = headers.index("factor_riesgo")+1
-    if col and factor_principal:
-        ws.format(
-            gspread.utils.rowcol_to_a1(len(ws.get_all_values()), col),
-            {"backgroundColor": _hex_to_rgb01(FACTOR_COLORS.get(factor_principal, "#ffffff"))}
-        )
+        # Colorear inmediatamente la celda del factor
+        col = None
+        if "factores" in headers: col = headers.index("factores")+1
+        elif "factor_riesgo" in headers: col = headers.index("factor_riesgo")+1
+        if col:
+            last_row = len(ws.get_all_values())  # última fila después del append
+            ws.format(
+                gspread.utils.rowcol_to_a1(last_row, col),
+                {"backgroundColor": _hex_to_rgb01(FACTOR_COLORS.get(f, "#ffffff"))}
+            )
 
 @st.cache_data(ttl=30, show_spinner=False)
 def read_df() -> pd.DataFrame:
+    """
+    Lee Sheet y devuelve un DataFrame donde cada registro tiene UN solo factor.
+    Si encuentra filas antiguas con 'A | B', las expande en múltiples filas.
+    """
     ws = _ws()
     records = ws.get_all_records()
+    if not records:
+        return pd.DataFrame(columns=["date","barrio","factores","delitos_relacionados",
+                                     "ligado_estructura","nombre_estructura","observaciones","maps_link","lat","lng"])
+
     df_raw = pd.DataFrame(records)
 
-    df = pd.DataFrame()
-    df["date"] = df_raw["date"] if "date" in df_raw.columns else ""
-    df["barrio"] = df_raw["barrio"] if "barrio" in df_raw.columns else ""
-    df["factores"] = df_raw["factores"] if "factores" in df_raw.columns else ""
-    for c in ["delitos_relacionados","ligado_estructura","nombre_estructura","observaciones"]:
-        df[c] = df_raw[c] if c in df_raw.columns else ""
-    df["maps_link"] = df_raw["maps_link"] if "maps_link" in df_raw.columns else ""
+    # Normalizar columnas faltantes
+    for c in ["date","barrio","factores","delitos_relacionados","ligado_estructura","nombre_estructura","observaciones","maps_link"]:
+        if c not in df_raw.columns:
+            df_raw[c] = ""
 
-    # extraer lat/lng desde maps_link
-    lats, lngs = [], []
+    # Expandir en múltiples filas si una celda trae "A | B"
+    expanded_rows = []
     url_pat = re.compile(r"https?://.*maps\?q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")
-    for link in df["maps_link"].fillna(""):
-        m = url_pat.search(str(link))
-        if m:
-            lats.append(float(m.group(1))); lngs.append(float(m.group(2)))
-        else:
-            lats.append(None); lngs.append(None)
-    df["lat"], df["lng"] = pd.to_numeric(lats, errors="coerce"), pd.to_numeric(lgs := lngs, errors="coerce")
+
+    for _, r in df_raw.iterrows():
+        factores_list = _split_factores(r.get("factores",""))
+        if not factores_list:
+            factores_list = [""]  # mantiene al menos una fila
+
+        # extraer lat/lng desde maps_link
+        m = url_pat.search(str(r.get("maps_link","")))
+        lat = float(m.group(1)) if m else None
+        lng = float(m.group(2)) if m else None
+
+        for f in factores_list:
+            expanded_rows.append({
+                "date": r.get("date",""),
+                "barrio": r.get("barrio",""),
+                "factores": f,  # un factor por fila
+                "delitos_relacionados": r.get("delitos_relacionados",""),
+                "ligado_estructura": r.get("ligado_estructura",""),
+                "nombre_estructura": r.get("nombre_estructura",""),
+                "observaciones": r.get("observaciones",""),
+                "maps_link": r.get("maps_link",""),
+                "lat": lat, "lng": lng
+            })
+
+    df = pd.DataFrame(expanded_rows)
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lng"] = pd.to_numeric(df["lng"], errors="coerce")
     return df
 
 # ========= MAP UTILS =========
@@ -183,12 +228,6 @@ def _inverse_mask_geojson(center_lat, center_lng, radius_km, npts=96):
         style_function=lambda x:{"fillColor":"#FFF","color":"#999","weight":1,"fillOpacity":0.70},
         overlay=True, control=True, pane="mask"
     )
-
-def _split_factores(factores_str: str):
-    """Convierte 'A | B | C' -> ['A','B','C']"""
-    if not isinstance(factores_str, str):
-        return []
-    return [s.strip() for s in factores_str.split("|") if s.strip()]
 
 # ========= UI =========
 st.title("📍 Microdespliegue Sámara – Encuestas georreferenciadas")
@@ -257,7 +296,7 @@ with tabs[0]:
                 data = {
                     "date": datetime.now(TZ).strftime("%d-%m-%Y"),
                     "barrio": (barrio or "").strip(),
-                    "factores": factores_sel,  # lista
+                    "factores": factores_sel,  # lista -> se guardan filas separadas
                     "delitos_relacionados": (delitos or "").strip(),
                     "ligado_estructura": (ligado or "").strip(),
                     "nombre_estructura": (nombre_estructura or "").strip(),
@@ -266,7 +305,7 @@ with tabs[0]:
                 }
                 try:
                     append_row(data)
-                    st.success("✅ Respuesta guardada correctamente en Google Sheets.")
+                    st.success(f"✅ Respuesta guardada: {len(factores_sel)} fila(s) (una por factor).")
                     st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ No se pudo guardar en Google Sheets.\n\n{e}")
@@ -278,11 +317,8 @@ with tabs[1]:
     if df.empty:
         st.info("Aún no hay registros.")
     else:
-        # Expandir factores únicos aun cuando estén almacenados como 'A | B'
-        factores_set = set()
-        for s in df["factores"].dropna():
-            factores_set.update(_split_factores(s))
-        factores_unicos = sorted(list(factores_set))
+        # factores únicos (ya vienen una fila por factor; también cubre legacy expandido)
+        factores_unicos = sorted([f for f in df["factores"].dropna().unique() if f])
 
         c1, c2, c3 = st.columns([0.45, 0.25, 0.30])
         with c1:
@@ -330,22 +366,18 @@ with tabs[1]:
             if pd.isna(lat) or pd.isna(lng):
                 omitidos += 1
                 continue
-
-            factores_row = _split_factores(r.get("factores",""))
-            if filtro != "(Todos)" and filtro not in factores_row:
+            if filtro != "(Todos)" and r.get("factores","") != filtro:
                 continue
 
-            # Color: el del primer factor si existe
-            factor_principal = factores_row[0] if factores_row else ""
-            color = FACTOR_COLORS.get(factor_principal, "#555555")
+            factor = r.get("factores","")
+            color = FACTOR_COLORS.get(factor, "#555555")
 
             jlat = float(lat) + _jitter(idx); jlng = float(lng) + _jitter(idx+101)
-            factors_html = "<br>".join(f"&bull; {f}" for f in factores_row) if factores_row else r.get("factores","")
             folium.CircleMarker([jlat, jlng], radius=7, color="#000", weight=1,
                                 fill=True, fill_color=color, fill_opacity=0.9,
                                 popup=(f"<b>Fecha:</b> {r.get('date','')}<br>"
                                        f"<b>Barrio:</b> {r.get('barrio','')}<br>"
-                                       f"<b>Factores:</b><br>{factors_html}<br>"
+                                       f"<b>Factor:</b> {factor}<br>"
                                        f"<b>Delitos:</b> {r.get('delitos_relacionados','')}<br>"
                                        f"<b>Estructura:</b> {r.get('ligado_estructura','')} {r.get('nombre_estructura','')}<br>"
                                        f"<b>Obs:</b> {r.get('observaciones','')}"),
