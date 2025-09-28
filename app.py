@@ -109,21 +109,30 @@ def append_row(data: dict):
     ws = _ws()
     headers = _headers(ws)
     maps_url = f'https://www.google.com/maps?q={data["lat"]},{data["lng"]}'
+
+    # data["factores"] ahora es lista -> guardamos como string " | " y usamos el primero para color
+    factores_list = data.get("factores", []) or []
+    factores_str = " | ".join(factores_list)
+    factor_principal = factores_list[0] if factores_list else ""
+
     values = {
         "date": data.get("date",""), "barrio": data.get("barrio",""),
-        "factores": data.get("factores",""), "delitos_relacionados": data.get("delitos_relacionados",""),
+        "factores": factores_str, "delitos_relacionados": data.get("delitos_relacionados",""),
         "ligado_estructura": data.get("ligado_estructura",""), "nombre_estructura": data.get("nombre_estructura",""),
         "observaciones": data.get("observaciones",""), "maps_link": maps_url,
-        "timestamp": data.get("date",""), "factor_riesgo": data.get("factores",""),
+        "timestamp": data.get("date",""), "factor_riesgo": factores_str,
     }
     ws.append_row([values.get(c,"") for c in headers], value_input_option="USER_ENTERED")
-    # colorear la celda del factor (si existe columna)
+
+    # colorear la celda del factor (si existe columna) con color del primer factor
     col = None
     if "factores" in headers: col = headers.index("factores")+1
     elif "factor_riesgo" in headers: col = headers.index("factor_riesgo")+1
-    if col:
-        ws.format(gspread.utils.rowcol_to_a1(len(ws.get_all_values()), col),
-                  {"backgroundColor": _hex_to_rgb01(FACTOR_COLORS.get(data.get("factores",""), "#ffffff"))})
+    if col and factor_principal:
+        ws.format(
+            gspread.utils.rowcol_to_a1(len(ws.get_all_values()), col),
+            {"backgroundColor": _hex_to_rgb01(FACTOR_COLORS.get(factor_principal, "#ffffff"))}
+        )
 
 @st.cache_data(ttl=30, show_spinner=False)
 def read_df() -> pd.DataFrame:
@@ -148,7 +157,7 @@ def read_df() -> pd.DataFrame:
             lats.append(float(m.group(1))); lngs.append(float(m.group(2)))
         else:
             lats.append(None); lngs.append(None)
-    df["lat"], df["lng"] = pd.to_numeric(lats, errors="coerce"), pd.to_numeric(lngs, errors="coerce")
+    df["lat"], df["lng"] = pd.to_numeric(lats, errors="coerce"), pd.to_numeric(lgs := lngs, errors="coerce")
     return df
 
 # ========= MAP UTILS =========
@@ -174,6 +183,12 @@ def _inverse_mask_geojson(center_lat, center_lng, radius_km, npts=96):
         style_function=lambda x:{"fillColor":"#FFF","color":"#999","weight":1,"fillOpacity":0.70},
         overlay=True, control=True, pane="mask"
     )
+
+def _split_factores(factores_str: str):
+    """Convierte 'A | B | C' -> ['A','B','C']"""
+    if not isinstance(factores_str, str):
+        return []
+    return [s.strip() for s in factores_str.split("|") if s.strip()]
 
 # ========= UI =========
 st.title("📍 Microdespliegue Sámara – Encuestas georreferenciadas")
@@ -221,32 +236,32 @@ with tabs[0]:
     with right:
         st.subheader("Formulario de encuesta")
         with st.form("form_encuesta", clear_on_submit=True):
-            barrio = st.text_input("Barrio *")
-            factor_sel = st.selectbox("Factor de riesgo *", options=FACTORES, index=None,
-                                      placeholder="Selecciona un factor")
-            delitos = st.text_area("Delitos relacionados al factor *", height=70)
-            ligado = st.radio("Ligado a estructura criminal *", ["No", "Sí"], index=0, horizontal=True)
-            nombre_estructura = st.text_input("Nombre de la estructura ligada (si aplica)")
-            observ = st.text_area("Observaciones", height=90)
+            barrio = st.text_input("Barrio (opcional)")
+            # Multiselección requerida
+            factores_sel = st.multiselect("Factor(es) de riesgo *", options=FACTORES, default=[])
+            delitos = st.text_area("Delitos relacionados (opcional)", height=70)
+            ligado = st.radio("Ligado a estructura criminal (opcional)", ["No", "Sí"], index=0, horizontal=True)
+            nombre_estructura = st.text_input("Nombre de la estructura (opcional)")
+            observ = st.text_area("Observaciones (opcional)", height=90)
             submit = st.form_submit_button("Guardar en Google Sheets")
 
         if submit:
             errs = []
-            if not barrio.strip(): errs.append("Indica el **Barrio**.")
-            if not factor_sel: errs.append("Selecciona un **factor de riesgo**.")
-            if not delitos.strip(): errs.append("Indica los **delitos relacionados**.")
-            if lat_val is None or lng_val is None: errs.append("Selecciona un **punto en el mapa**.")
+            if lat_val is None or lng_val is None:
+                errs.append("Selecciona un **punto en el mapa**.")
+            if not factores_sel:
+                errs.append("Selecciona al menos **un factor de riesgo**.")
             if errs:
                 st.error("• " + "\n• ".join(errs))
             else:
                 data = {
                     "date": datetime.now(TZ).strftime("%d-%m-%Y"),
-                    "barrio": barrio.strip(),
-                    "factores": factor_sel,
-                    "delitos_relacionados": delitos.strip(),
-                    "ligado_estructura": ligado,
-                    "nombre_estructura": nombre_estructura.strip(),
-                    "observaciones": observ.strip(),
+                    "barrio": (barrio or "").strip(),
+                    "factores": factores_sel,  # lista
+                    "delitos_relacionados": (delitos or "").strip(),
+                    "ligado_estructura": (ligado or "").strip(),
+                    "nombre_estructura": (nombre_estructura or "").strip(),
+                    "observaciones": (observ or "").strip(),
                     "lat": lat_val, "lng": lng_val,
                 }
                 try:
@@ -263,9 +278,14 @@ with tabs[1]:
     if df.empty:
         st.info("Aún no hay registros.")
     else:
+        # Expandir factores únicos aun cuando estén almacenados como 'A | B'
+        factores_set = set()
+        for s in df["factores"].dropna():
+            factores_set.update(_split_factores(s))
+        factores_unicos = sorted(list(factores_set))
+
         c1, c2, c3 = st.columns([0.45, 0.25, 0.30])
         with c1:
-            factores_unicos = sorted([f for f in df["factores"].dropna().unique() if f])
             filtro = st.selectbox("Filtrar por factor", options=["(Todos)"] + factores_unicos, index=0)
         with c2:
             show_heat = st.checkbox("Mostrar HeatMap", value=True)
@@ -310,16 +330,22 @@ with tabs[1]:
             if pd.isna(lat) or pd.isna(lng):
                 omitidos += 1
                 continue
-            if filtro != "(Todos)" and r.get("factores","") != filtro:
+
+            factores_row = _split_factores(r.get("factores",""))
+            if filtro != "(Todos)" and filtro not in factores_row:
                 continue
 
-            color = FACTOR_COLORS.get(r.get("factores",""), "#555555")
+            # Color: el del primer factor si existe
+            factor_principal = factores_row[0] if factores_row else ""
+            color = FACTOR_COLORS.get(factor_principal, "#555555")
+
             jlat = float(lat) + _jitter(idx); jlng = float(lng) + _jitter(idx+101)
+            factors_html = "<br>".join(f"&bull; {f}" for f in factores_row) if factores_row else r.get("factores","")
             folium.CircleMarker([jlat, jlng], radius=7, color="#000", weight=1,
                                 fill=True, fill_color=color, fill_opacity=0.9,
                                 popup=(f"<b>Fecha:</b> {r.get('date','')}<br>"
                                        f"<b>Barrio:</b> {r.get('barrio','')}<br>"
-                                       f"<b>Factor:</b> {r.get('factores','')}<br>"
+                                       f"<b>Factores:</b><br>{factors_html}<br>"
                                        f"<b>Delitos:</b> {r.get('delitos_relacionados','')}<br>"
                                        f"<b>Estructura:</b> {r.get('ligado_estructura','')} {r.get('nombre_estructura','')}<br>"
                                        f"<b>Obs:</b> {r.get('observaciones','')}"),
